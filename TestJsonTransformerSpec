@@ -1,0 +1,218 @@
+/*
+ * Copyright 2020 HM Revenue & Customs
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package models.submission
+
+import org.scalatest.{MustMatchers, WordSpec}
+import play.api.libs.functional.syntax._
+import play.api.libs.json.Reads._
+import play.api.libs.json._
+
+class TestJsonTransformerSpec extends WordSpec with MustMatchers {
+//  case class gizmo()
+
+  val gizmo: JsObject = Json.obj(
+    "name" -> "gizmo",
+    "description" -> Json.obj(
+      "features" -> Json.arr( "hairy", "cute", "gentle"),
+      "size" -> 10,
+      "sex" -> "undefined",
+      "life_expectancy" -> "very old",
+      "danger" -> Json.obj(
+        "wet" -> "multiplies",
+        "feed after midnight" -> "becomes gremlin"
+      )
+    ),
+    "loves" -> "all"
+  )
+
+  val gremlin: JsObject = Json.obj(
+    "name" -> "gremlin",
+    "description" -> Json.obj(
+      "features" -> Json.arr("skinny", "ugly", "evil"),
+      "size" -> 30,
+      "sex" -> "undefined",
+      "life_expectancy" -> "very old",
+      "danger" -> "always"
+    ),
+    "hates" -> "all"
+  )
+
+  val json: String = """{
+               |  "key1" : "value1",
+               |  "key2" : {
+               |    "key21" : 123,
+               |    "key22" : true,
+               |    "key23" : [ "alpha", "beta", "gamma"],
+               |    "key24" : {
+               |      "key241" : 234.123,
+               |      "key242" : "value242"
+               |    }
+               |  },
+               |  "key3" : 234
+               |}""".stripMargin
+
+  "JsonTransformer" when {
+
+    "calling library functions" must {
+
+      "Json pick" in {
+
+        Json.parse(json).transform((__ \ 'key2 \ 'key23).json.pick).get mustBe Json.parse(
+        """["alpha","beta","gamma"]""")
+
+      }
+
+      "Json pick as Array" in {
+
+        Json.parse(json).transform((__ \ 'key2 \ 'key23).json.pick[JsArray]).get mustBe Json.parse(
+        """["alpha","beta","gamma"]""")
+
+      }
+
+      "Json pick branch" in {
+
+        Json.parse(json).transform((__ \ 'key2 \ 'key24 \ 'key241).json.pickBranch).get mustBe Json.parse(
+        """{"key2":{"key24":{"key241":234.123}}}""")
+
+      }
+
+      "Json put constant" in {
+
+        Json.parse(json).transform((__ \ 'key24 \ 'key241).json.put(JsNumber(456))).get mustBe Json.parse(
+        """{"key24":{"key241":456}}""".stripMargin)
+
+      }
+
+      "Json copy path" in {
+
+        Json.parse(json).transform((__ \ 'key25 \ 'key251).json.copyFrom( (__ \ 'key2 \ 'key21).json.pick )).get mustBe Json.parse(
+        """{"key25":{"key251":123}}""")
+
+      }
+
+      "Json full copy and update" in {
+
+        Json.parse(json).transform((__ \ 'key2 \ 'key24).json.update(
+          __.read[JsObject].map{ o => o ++ Json.obj( "field243" -> "coucou" ) }
+        )).get mustBe Json.parse(
+        """{
+          |	"key1": "value1",
+          |	"key2": {
+          |		"key24": {
+          |			"field243": "coucou",
+          |			"key242": "value242",
+          |			"key241": 234.123
+          |		},
+          |		"key23": [
+          |			"alpha",
+          |			"beta",
+          |			"gamma"
+          |		],
+          |		"key22": true,
+          |		"key21": 123
+          |	},
+          |	"key3": 234
+          |}""".stripMargin)
+
+      }
+
+      "Json delete" in {
+
+        Json.parse(json).transform((__ \ 'key2 \ 'key22).json.prune).get mustBe Json.parse(
+        """{
+          |	"key1": "value1",
+          |	"key3": 234,
+          |	"key2": {
+          |		"key21": 123,
+          |		"key23": [
+          |			"alpha",
+          |			"beta",
+          |			"gamma"
+          |		],
+          |		"key24": {
+          |			"key241": 234.123,
+          |			"key242": "value242"
+          |		}
+          |	}
+          |}""".stripMargin)
+
+      }
+
+      "Json multiple operations" in {
+
+        val jsonTransformer = (__ \ 'key2).json.pickBranch(
+          (__ \ 'key21).json.update(
+            Reads.of[JsNumber].map{ case JsNumber(nb) => JsNumber(nb + 10) }
+          ) andThen
+            (__ \ 'key23).json.update(
+              Reads.of[JsArray].map{ case JsArray(arr) => JsArray(arr :+ JsString("delta")) }
+            )
+        )
+
+        Json.parse(json).transform(jsonTransformer).get mustBe Json.parse(
+        """{
+          |	"key2": {
+          |		"key24": {
+          |			"key241": 234.123,
+          |			"key242": "value242"
+          |		},
+          |		"key23": [
+          |			"alpha",
+          |			"beta",
+          |			"gamma",
+          |			"delta"
+          |		],
+          |		"key22": true,
+          |		"key21": 133
+          |	}
+          |}""".stripMargin)
+      }
+
+      "Json multiple operations on same branch" in {
+
+        Json.parse(json).transform((__ \ 'key2).json.pickBranch((__ \ 'key23).json.prune)).get mustBe Json.parse(
+        """{
+          |	"key2": {
+          |		"key24": {
+          |			"key241": 234.123,
+          |			"key242": "value242"
+          |		},
+          |		"key22": true,
+          |		"key21": 123
+          |	}
+          |}""".stripMargin)
+      }
+
+      "Json combinators" in {
+
+        val gizmo2gremlin = (
+          (__ \ 'name).json.put(JsString("gremlin")) and
+            (__ \ 'description).json.pickBranch(
+              (__ \ 'size).json.update( Reads.of[JsNumber].map{ case JsNumber(size) => JsNumber(size * 3) } ) and
+                (__ \ 'features).json.put( Json.arr("skinny", "ugly", "evil") ) and
+                (__ \ 'danger).json.put(JsString("always"))
+                reduce
+            ) and
+            (__ \ 'hates).json.copyFrom( (__ \ 'loves).json.pick )
+          ) reduce
+
+
+        gizmo.transform(gizmo2gremlin).get mustBe gremlin
+      }
+    }
+  }
+}
